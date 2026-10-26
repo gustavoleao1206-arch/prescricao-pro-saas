@@ -1,0 +1,88 @@
+{
+  "name": "prescricao-tributaria-pro",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plataforma web de apoio jurídico para análise de prescrição e decadência tributária em execuções fiscais.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "build:check": "prisma generate && node scripts/build-check.mjs",
+    "test": "node scripts/pg-teste.mjs test:tudo",
+    "test:db": "node scripts/pg-teste.mjs test",
+    "test:sem-banco": "vitest run --exclude=tests/analise-sem-texto-nao-cobra.test.ts --exclude=tests/retencao.test.ts --exclude=tests/tranca-do-banco.test.ts --exclude=tests/cifragem-de-paginas.test.ts --exclude=tests/creditos.test.ts --exclude=tests/asaas-creditos.test.ts --exclude=tests/asaas-email-falha.test.ts --exclude=tests/asaas-payload-real.test.ts --exclude=tests/asaas-metodo-pagamento.test.ts --exclude=tests/asaas-boleto.test.ts --exclude=tests/asaas-dinheiro-sem-destino.test.ts --exclude=tests/downgrade.test.ts --exclude=tests/analise-travada.test.ts --exclude=tests/webhook-falha.test.ts --exclude=tests/reprocessamento-equipe.test.ts --exclude=tests/boleto-rota.test.ts --exclude=tests/organizacao-sob-demanda.test.ts --exclude=tests/revisao-contestacao.test.ts --exclude=tests/ciclo-anual.test.ts --exclude=tests/apagar-conta.test.ts --exclude=tests/ativacao-manual.test.ts --exclude=tests/reconciliacao.test.ts --exclude=tests/reconciliacao-sem-credencial.test.ts --exclude=tests/pedido-do-titular.test.ts --exclude=tests/sessao-inatividade.test.ts --exclude=tests/troca-de-papel.test.ts --exclude=tests/reenviar-verificacao.test.ts --exclude=tests/contratar-exige-email.test.ts --exclude=tests/troca-de-email.test.ts --exclude=tests/troca-email-e-senha.test.ts --exclude=tests/avisos-de-email.test.ts --exclude=tests/troca-email-oraculo-de-senha.test.ts --exclude=tests/link-de-email-reaberto.test.ts --exclude=tests/cancelar-troca-pelo-titular.test.ts --exclude=tests/link-nao-reativa-conta.test.ts --exclude=tests/situacao-da-analise.test.ts --exclude=tests/rota-situacao-analise.test.ts --exclude=tests/estorno-do-entregue.test.ts --exclude=tests/estorno-concorrente-e-varredura.test.ts --exclude=tests/trilha-de-leitura.test.ts",
+    "test:watch": "vitest",
+    "db:teste": "node scripts/pg-teste.mjs start",
+    "db:teste:parar": "node scripts/pg-teste.mjs stop",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:seed": "tsx --tsconfig tsconfig.scripts.json prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force && npm run db:seed",
+    "worker": "tsx --tsconfig tsconfig.scripts.json src/lib/queue/worker.ts",
+    "creditos:manutencao": "tsx --tsconfig tsconfig.scripts.json scripts/manutencao-creditos.ts",
+    "catalogo:sincronizar": "tsx --tsconfig tsconfig.scripts.json scripts/sincronizar-catalogo.ts",
+    "asaas:assinatura": "tsx --tsconfig tsconfig.scripts.json scripts/assinatura-asaas.ts",
+    "pagamento:diagnostico": "tsx --tsconfig tsconfig.scripts.json scripts/diagnostico-pagamento.ts",
+    "pagamento:verificar": "tsx --tsconfig tsconfig.scripts.json scripts/verificar-liberacao.ts",
+    "paginas:cifrar": "tsx --tsconfig tsconfig.scripts.json scripts/cifrar-paginas.ts",
+    "backup:verificar": "tsx --tsconfig tsconfig.scripts.json scripts/verificar-restauracao.ts",
+    "pagamento:reconciliar": "tsx --tsconfig tsconfig.scripts.json scripts/reconciliar-pagamentos.ts",
+    "alerta:testar": "tsx --tsconfig tsconfig.scripts.json scripts/testar-alerta.ts",
+    "verify": "bash scripts/verificar.sh"
+  },
+  "prisma": {
+    "seed": "tsx --tsconfig tsconfig.scripts.json prisma/seed.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@aws-sdk/client-s3": "^3.687.0",
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.25.0",
+    "docx": "^9.0.3",
+    "ioredis": "^5.4.1",
+    "jose": "^5.9.6",
+    "next": "^15.5.28",
+    "openai": "^6.49.0",
+    "otplib": "^12.0.1",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.9",
+    "react-dom": "^19.2.9",
+    "resend": "^4.0.1",
+    "server-only": "0.0.1",
+    "unpdf": "^1.6.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.16.11",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.28",
+    "js-yaml": "^4.3.0",
+    "postcss": "^8.4.47",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.13",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "^8.5.23"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

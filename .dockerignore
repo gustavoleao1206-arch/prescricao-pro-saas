@@ -1,0 +1,54 @@
+# Contexto de build da imagem Docker.
+#
+# Duas razões para cada exclusão: build mais rápido e, sobretudo, correção.
+# O Dockerfile faz `COPY . .` no estágio builder DEPOIS de trazer o
+# node_modules do estágio de dependências — sem este arquivo, um node_modules
+# local (compilado para outro sistema operacional) sobrescreveria o que o
+# `npm ci` instalou para Linux e o build quebraria de forma difícil de
+# diagnosticar.
+
+# Dependências e saídas de build (recriadas dentro da imagem)
+node_modules
+.next
+.next-check
+out
+build
+tsconfig.tsbuildinfo
+
+# Segredos — nunca dentro da imagem (entram como variáveis de ambiente)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Histórico e metadados
+.git
+.gitignore
+.github
+
+# Documentos enviados em desenvolvimento e backups
+storage
+uploads
+backups
+
+# Dados reais de processos e de requerentes — não entram na imagem
+CONHECIMENTO
+PROCESSOS TESTES PARA APLICATIVO
+Requerentes-*.csv
+Triagem-*.csv
+Triagem-*.xlsx
+
+# Material de design não usado em tempo de execução
+hero05
+*.eps
+
+# Sistema
+.DS_Store
+__MACOSX
+Thumbs.db
+
+# Documentação (não faz parte da aplicação em execução)
+*.md
+!knowledge/**/*.md
+docs

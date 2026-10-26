@@ -1,0 +1,258 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Tipografia: as variáveis --font-body, --font-display e --font-mono são
+ * injetadas por next/font/local no layout raiz (fontes auto-hospedadas,
+ * sem dependência de rede no build nem em runtime).
+ */
+
+/*
+ * TEMA CLARO / ESCURO
+ * A escala neutra é definida aqui como variáveis RGB e consumida pelo Tailwind
+ * (ver tailwind.config.ts). No tema escuro a rampa é invertida: os tons "claros"
+ * viram superfícies escuras e os "escuros" viram texto claro — de modo que todo
+ * o app acompanha o tema sem precisar de variante `dark:` em cada componente.
+ */
+:root {
+  /* Superfícies e bordas (50 a 300) e tons de TEXTO (400 a 900).
+   *
+   * Os tons 400 e 500 foram escurecidos um degrau: eram slate-400 (2,6:1 sobre
+   * branco) e slate-500 (4,8:1). O 400 reprovava no mínimo de contraste da
+   * WCAG AA (4,5:1) e é justamente o tom das legendas em caixa-alta pequena,
+   * o pior caso de leitura da tela. Conferido antes de mexer: nenhum
+   * `bg-neutro-*` ou `border-neutro-*` usa 400+, então escurecer não altera
+   * nenhuma superfície, só o texto. */
+  --n-50: 248 250 252;
+  --n-100: 241 245 249;
+  --n-200: 226 232 240;
+  --n-300: 203 213 225;
+  --n-400: 100 116 139; /* 4,8:1 sobre branco */
+  --n-500: 71 85 105; /* 7,0:1 */
+  --n-600: 51 65 85; /* 9,7:1 */
+  --n-700: 40 52 71;
+  --n-800: 30 41 59;
+  --n-900: 15 23 42;
+  --superficie: 255 255 255;
+}
+
+.dark {
+  --n-50: 11 18 32;
+  --n-100: 17 26 43;
+  --n-200: 32 44 66;
+  --n-300: 46 61 87;
+  --n-400: 100 116 139;
+  --n-500: 148 163 184;
+  --n-600: 182 194 212;
+  --n-700: 203 213 225;
+  --n-800: 226 232 240;
+  --n-900: 241 245 249;
+  --superficie: 15 23 40;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* Base escura da marca (#060A14, mesma do site) por trás da arte institucional. */
+    background-color: #060a14;
+  }
+  body {
+    @apply font-sans text-neutro-800 antialiased;
+    /* Entrelinha do site da marca. */
+    line-height: 1.68;
+    background-color: transparent;
+  }
+  h1, h2, h3, h4 {
+    /* Títulos na fonte de display da marca (peso e tracking do site). */
+    @apply font-display font-bold text-marinho-700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  a {
+    @apply transition-colors;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-marca-400 ring-offset-2 ring-offset-white;
+  }
+}
+
+@layer components {
+  /* ------------------------------------------------------------------
+   * Fundo institucional: hoje é o componente FundoInterativo (camada fixa
+   * única no layout raiz, com a lanterna que segue o ponteiro). Cada seção
+   * aplica um "véu" por cima para garantir legibilidade.
+   * ------------------------------------------------------------------ */
+
+  /* Véu CLARO: painéis (cliente/admin), onde o texto fica sobre cards brancos.
+     Subiu de 0,90 para 0,965. A 0,90 a arte institucional (que é densa, cheia de
+     pontos e linhas) atravessava o véu e deixava o fundo do tema claro "sujo",
+     roubando nitidez do texto que fica fora dos cards. */
+  .veu-claro {
+    background-color: rgb(241 245 249 / 0.965);
+  }
+
+  /* Véu CLARO FORTE: páginas de texto corrido (termos, privacidade, FAQ), onde
+     o conteúdo NÃO fica sobre cards e portanto encosta direto na arte. Aqui o
+     véu é quase sólido, porque documento jurídico se lê por minutos seguidos e
+     qualquer textura atrás do texto cansa a vista. */
+  .veu-claro-forte {
+    background-color: rgb(248 250 252 / 0.99);
+  }
+
+  /* Véu ESCURO — telas de acesso (login e demais telas de autenticação),
+     onde a arte aparece com destaque sob um degradê de contraste. */
+  .veu-escuro {
+    background-image: linear-gradient(180deg, rgb(6 10 20 / 0.70) 0%, rgb(6 10 20 / 0.88) 100%);
+  }
+
+  .container-page {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 font-display text-sm font-semibold transition disabled:cursor-not-allowed;
+  }
+  /* Gradiente oficial da marca (mesmo do site Leão Amorim Tecnologia). */
+  .grad-marca {
+    background-image: linear-gradient(120deg, #4f7cff 0%, #26d5ee 100%);
+  }
+
+  /* Ação principal — gradiente da marca com texto em azul-noite, como no site. */
+  .btn-primary {
+    @apply btn grad-marca shadow-card;
+    color: #04122e;
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.07);
+  }
+  /*
+   * Desabilitado é superfície neutra, não gradiente esmaecido: baixar a
+   * opacidade de um botão colorido mistura o texto com o fundo e, no tema
+   * claro, o rótulo some. Aqui a cor é própria e legível nos dois temas.
+   */
+  .btn-primary:disabled,
+  .btn-marinho:disabled {
+    background-image: none;
+    background-color: rgb(var(--n-200));
+    color: rgb(var(--n-600));
+    box-shadow: none;
+  }
+  .btn-outline:disabled,
+  .btn-ghost:disabled {
+    color: rgb(var(--n-500));
+    border-color: rgb(var(--n-200));
+    background-color: transparent;
+  }
+  .btn-marinho {
+    @apply btn bg-marinho-700 text-white hover:bg-marinho-600 shadow-card;
+  }
+  .btn-outline {
+    @apply btn border border-marinho-200 bg-white text-marinho-700 hover:border-marinho-400 hover:bg-marinho-50;
+  }
+  .btn-ghost {
+    @apply btn text-marinho-700 hover:bg-marinho-50;
+  }
+
+  .card {
+    @apply rounded-2xl border border-neutro-200 bg-white shadow-card;
+  }
+  .input {
+    @apply w-full rounded-xl border border-neutro-300 bg-white px-3.5 py-2.5 text-sm text-neutro-900 placeholder:text-neutro-400 focus:border-marinho-400 focus:ring-2 focus:ring-marinho-100;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-neutro-700;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .prose-legal h1 { @apply text-2xl mb-4; }
+  .prose-legal h2 { @apply text-xl mt-8 mb-3; }
+  .prose-legal h3 { @apply text-lg mt-6 mb-2; }
+  /* Texto corrido dos documentos legais: justificado, como se espera de peça e
+     contrato. A hifenização entra junto porque justificar sem hifenizar abre
+     "rios" de espaço entre palavras em telas estreitas, e o português tem
+     palavras longas o bastante para isso ficar feio no celular. */
+  .prose-legal p {
+    @apply mb-3 leading-relaxed;
+    text-align: justify;
+    text-justify: inter-word;
+    hyphens: auto;
+  }
+  .prose-legal li {
+    text-align: justify;
+    hyphens: auto;
+  }
+  /* Título nunca é justificado: com uma linha só, o justify não estica nada, mas
+     com duas ele espaça a primeira de forma estranha. */
+  .prose-legal h1,
+  .prose-legal h2,
+  .prose-legal h3 {
+    text-align: left;
+    hyphens: manual;
+  }
+  .prose-legal ul { @apply mb-3 list-disc pl-6 space-y-1; }
+  .prose-legal table { @apply w-full text-sm border-collapse my-4; }
+  .prose-legal th, .prose-legal td { @apply border border-neutro-200 px-3 py-2 text-left; }
+}
+
+/* --------------------------------------------------------------------------
+ * Ajustes do TEMA ESCURO
+ * A rampa neutra já vira sozinha (variáveis acima). Aqui ficam apenas os casos
+ * que o @apply embute como declaração fixa (cards, inputs, títulos) e as
+ * superfícies brancas/marinho usadas como utilitário nas telas.
+ * -------------------------------------------------------------------------- */
+.dark .card {
+  background-color: rgb(var(--superficie));
+  border-color: rgb(var(--n-200));
+}
+.dark .input {
+  background-color: rgb(var(--superficie));
+  border-color: rgb(var(--n-300));
+  color: rgb(var(--n-900));
+}
+.dark .btn-outline {
+  background-color: transparent;
+  border-color: rgb(var(--n-300));
+  color: rgb(var(--n-800));
+}
+.dark .btn-outline:hover {
+  background-color: rgb(var(--n-100));
+  border-color: rgb(var(--n-400));
+}
+.dark .btn-ghost {
+  color: rgb(var(--n-800));
+}
+.dark .btn-ghost:hover {
+  background-color: rgb(var(--n-100));
+}
+.dark h1,
+.dark h2,
+.dark h3,
+.dark h4 {
+  color: rgb(var(--n-900));
+}
+/* Superfícies e textos institucionais aplicados como utilitário nas telas. */
+.dark .bg-white {
+  background-color: rgb(var(--superficie));
+}
+.dark .text-marinho-600,
+.dark .text-marinho-700,
+.dark .text-marinho-800,
+.dark .text-marinho-900 {
+  color: rgb(var(--n-900));
+}
+.dark .border-marinho-200 {
+  border-color: rgb(var(--n-300));
+}
+.dark .hover\:bg-marinho-50:hover {
+  background-color: rgb(var(--n-100));
+}
+/* No tema escuro os véus deixam a arte institucional aparecer sob fundo escuro. */
+.dark .veu-claro {
+  background-color: rgb(6 10 20 / 0.82);
+}
+.dark .veu-claro-forte {
+  background-color: rgb(6 10 20 / 0.90);
+}

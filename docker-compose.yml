@@ -1,0 +1,55 @@
+# Ambiente de desenvolvimento — PostgreSQL + MinIO (armazenamento S3-compatível).
+# Uso: docker compose up -d
+#
+# ⚠️ Toda porta é publicada só em 127.0.0.1. Sem o prefixo, o Docker publica em 0.0.0.0
+# e o banco (senha "ptp"), o Redis (sem senha) e o MinIO ficam acessíveis a qualquer
+# máquina da mesma rede — Wi-Fi de escritório, de hotel, de cafeteria. As senhas daqui
+# são triviais de propósito, porque só servem nesta máquina; o que as protege é isto.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ptp_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ptp
+      POSTGRES_PASSWORD: ptp
+      POSTGRES_DB: prescricao_tributaria
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ptp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptp -d prescricao_tributaria"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Fila (opcional) — necessário apenas com QUEUE_DRIVER=bullmq.
+  redis:
+    image: redis:7-alpine
+    container_name: ptp_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ptp_redis:/data
+
+  # Armazenamento privado S3-compatível para documentos (opcional em dev).
+  storage:
+    image: minio/minio:latest
+    container_name: ptp_storage
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ptpminio
+      MINIO_ROOT_PASSWORD: ptpminio123
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - ptp_minio:/data
+
+volumes:
+  ptp_pgdata:
+  ptp_minio:
+  ptp_redis:

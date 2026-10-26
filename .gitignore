@@ -1,0 +1,65 @@
+# Dependências
+/node_modules
+/.pnp
+.pnp.js
+
+# Build / Next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Ambiente e segredos — NUNCA versionar
+.env
+.env.backup-*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# Armazenamento local de documentos (dev)
+/storage/
+/uploads/
+
+# Prisma
+/prisma/*.db
+/prisma/*.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testes / cobertura
+/coverage
+/.vitest
+
+# Dados pessoais de terceiros — NUNCA versionar (LGPD)
+# Processos e planilhas de requerentes reais usados em teste. Ficavam apenas
+# "não rastreados", o que não protege: um `git add -A` os enviaria ao GitHub.
+/CONHECIMENTO/
+/PROCESSOS TESTES PARA APLICATIVO/
+/Requerentes-*.csv
+/Triagem-*.csv
+/Triagem-*.xlsx
+
+# Material de design (pesado, não faz parte da aplicação)
+/hero05/
+*.eps
+
+# Sistema
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# Editores
+/.idea
+/.vscode/*
+!/.vscode/extensions.json
+
+.next-check
+backups/

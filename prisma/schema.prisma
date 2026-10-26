@@ -1,0 +1,1101 @@
+// =============================================================================
+// Prescrição Pro — Modelo de dados (PostgreSQL / Prisma)
+// -----------------------------------------------------------------------------
+// Princípios:
+//  - Segregação por organização (multi-tenant) e por usuário.
+//  - Trilha de auditoria em AuditLog e SecurityEvent.
+//  - Versionamento de prompts, relatórios e peças.
+//  - Idempotência de eventos de pagamento via externalId único.
+//  - Campos sensíveis (CPF/CNPJ) são criptografados na camada de aplicação.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // Alvos de compilação do engine.
+  //
+  // "native" cobre a máquina de desenvolvimento. O segundo alvo existe por causa
+  // do contêiner de produção: a imagem é Alpine (libc musl) com OpenSSL 3. Sem
+  // declará-lo, o `prisma generate` embute apenas o engine da máquina de build;
+  // no boot o Prisma percebe a falta, tenta BAIXAR o engine correto e falha,
+  // porque o contêiner roda como usuário sem permissão de escrita em
+  // node_modules. O sintoma engana: "Can't write to @prisma/engines".
+  //
+  // Declarado aqui, o engine certo é baixado em tempo de build — quando ainda há
+  // rede e permissão — e nada precisa ser buscado em execução.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  CLIENTE
+  REVISOR
+  SUPORTE
+}
+
+enum UserStatus {
+  PENDENTE_VERIFICACAO
+  ATIVO
+  BLOQUEADO
+  SUSPENSO
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBRO
+}
+
+enum BillingPeriod {
+  MENSAL
+  ANUAL
+  PACOTE
+  UNICO
+}
+
+enum SubscriptionStatus {
+  TESTE
+  ATIVA
+  VENCIDA
+  CANCELADA
+  SUSPENSA
+  INADIMPLENTE
+  ESTORNADA
+}
+
+enum PaymentProvider {
+  HOTMART
+  ASAAS
+  MANUAL
+  STRIPE
+  OUTRO
+}
+
+enum PaymentStatus {
+  APROVADO
+  PENDENTE
+  RECUSADO
+  ESTORNADO
+  CHARGEBACK
+  CANCELADO
+}
+
+enum HotmartEventStatus {
+  RECEBIDO
+  PROCESSADO
+  IGNORADO
+  ERRO
+}
+
+// Tipos de movimentação da razão de créditos (CreditLedger).
+enum CreditMovementKind {
+  ASSINATURA // crédito liberado pela assinatura (renovação do ciclo)
+  CONSUMO // crédito utilizado por uma análise
+  ESTORNO // crédito devolvido após erro técnico
+  COMPRA_ADICIONAL // pacote avulso comprado
+  EXPIRACAO // crédito expirado ao fim do ciclo/validade
+  AJUSTE_ADMIN // ajuste manual da administração
+  BONUS // bônus promocional
+}
+
+// De qual bolsa o crédito saiu/entrou. Os mensais expiram no fim do ciclo;
+// os adicionais têm validade própria (padrão 90 dias).
+enum CreditBucket {
+  MENSAL
+  ADICIONAL
+}
+
+enum AnalysisType {
+  PRESCRICAO
+  DECADENCIA
+  PRESCRICAO_INTERCORRENTE
+  EXECUCAO_FISCAL_COMPLETA
+  NULIDADES
+  GERAL
+}
+
+enum AnalysisStatus {
+  RASCUNHO
+  DOCUMENTOS_ENVIADOS
+  VALIDANDO_DOCUMENTOS
+  EXTRAINDO_INFORMACOES
+  PROCESSANDO
+  AGUARDANDO_INFORMACOES
+  AGUARDANDO_REVISAO
+  EM_REVISAO
+  CONCLUIDA
+  ERRO_PROCESSAMENTO
+  CANCELADA
+  ARQUIVADA
+}
+
+enum ConfidenceLevel {
+  ALTO
+  MEDIO
+  BAIXO
+  INDETERMINADO
+}
+
+enum DocumentStatus {
+  RECEBIDO
+  VALIDANDO
+  PROCESSADO
+  ILEGIVEL
+  RECUSADO
+  EXCLUIDO
+}
+
+enum TimelineEventType {
+  CONSTITUICAO_CREDITO
+  INSCRICAO_DIVIDA_ATIVA
+  AJUIZAMENTO
+  DESPACHO_CITATORIO
+  CITACAO
+  PARCELAMENTO
+  SUSPENSAO
+  ARQUIVAMENTO
+  PENHORA
+  GARANTIA
+  MANIFESTACAO
+  DECISAO
+  DILIGENCIA
+  POSSIVEL_INTERRUPTIVO
+  POSSIVEL_SUSPENSIVO
+  SEM_EFEITO_DEFINIDO
+}
+
+enum FactNature {
+  FATO_CONFIRMADO
+  INTERPRETACAO
+  HIPOTESE
+  PENDENTE
+}
+
+enum PetitionType {
+  EXCECAO_PRE_EXECUTIVIDADE
+  EMBARGOS_EXECUCAO_FISCAL
+  RECONHECIMENTO_PRESCRICAO
+  PRESCRICAO_INTERCORRENTE
+  MANIFESTACAO_DECADENCIA
+  PEDIDO_EXTINCAO
+  RELATORIO_JURIDICO
+  PARECER_PRELIMINAR
+  PETICAO_SIMPLES
+  REQUERIMENTO_DILIGENCIAS
+  RECONHECIMENTO_NULIDADE
+}
+
+enum ReviewStatus {
+  PENDENTE
+  EM_ANALISE
+  APROVADA
+  DEVOLVIDA
+}
+
+enum TicketStatus {
+  ABERTO
+  EM_ATENDIMENTO
+  AGUARDANDO_CLIENTE
+  RESOLVIDO
+  ENCERRADO
+}
+
+enum TicketPriority {
+  BAIXA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum ConsentType {
+  TERMOS_USO
+  POLITICA_PRIVACIDADE
+  USO_IA
+  COOKIES
+  CONDICOES_ASSINATURA
+}
+
+enum KnowledgeCategory {
+  CONSTITUICAO_FEDERAL
+  CODIGO_TRIBUTARIO_NACIONAL
+  LEI_EXECUCOES_FISCAIS
+  CODIGO_PROCESSO_CIVIL
+  JURISPRUDENCIA_STF
+  JURISPRUDENCIA_STJ
+  TEMAS_REPETITIVOS
+  SUMULAS
+  MANUAIS
+  DOUTRINA
+  LEGISLACAO_COMPLEMENTAR
+  MODELOS_PECAS
+  MODELOS_RELATORIOS
+  ORIENTACOES_INTERNAS
+  MATERIAIS_PROPRIETARIO
+}
+
+enum PromptKind {
+  SISTEMA_ANALISE
+  EXTRACAO_EVENTOS
+  LINHA_DO_TEMPO
+  RELATORIO
+  PECA_JURIDICA
+  VALIDACAO
+}
+
+enum TokenType {
+  VERIFICACAO_EMAIL
+  RECUPERACAO_SENHA
+  CRIACAO_SENHA
+  CONVITE_MEMBRO
+  // Troca de e-mail pedida pelo próprio cliente. O link vai para o endereço NOVO:
+  // é ele que prova o controle do destino, e a troca só vale quando é clicado.
+  TROCA_EMAIL
+}
+
+// ----------------------------------------------------------------------------
+// Identidade e acesso
+// ----------------------------------------------------------------------------
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  emailVerifiedAt   DateTime?
+  // Endereço NOVO pedido pelo cliente, ainda não confirmado.
+  //
+  // A troca não é aplicada em `email` na hora: fica aqui até o link enviado ao
+  // endereço novo ser clicado. Sem essa espera, um dígito errado apontaria a conta
+  // para um endereço que o cliente não controla — e como recuperação de senha e
+  // aviso de cobrança passam pelo e-mail, ele perderia a conta que pagou.
+  //
+  // SEM @unique de propósito: dois pedidos pendentes para o mesmo endereço não podem
+  // derrubar o segundo com erro de banco. A unicidade que importa é a de `email`, e
+  // ela é conferida de novo no momento de aplicar.
+  pendingEmail      String?
+  passwordHash      String?
+  name              String
+  phone             String?
+  // CPF/CNPJ armazenado criptografado (camada de aplicação).
+  documentEnc       String?
+  documentType      String? // "CPF" | "CNPJ"
+  role              Role       @default(CLIENTE)
+  status            UserStatus @default(PENDENTE_VERIFICACAO)
+
+  // Segurança de login
+  failedLoginCount  Int        @default(0)
+  lockedUntil       DateTime?
+  lastLoginAt       DateTime?
+  twoFactorEnabled     Boolean  @default(false)
+  twoFactorSecret      String? // segredo TOTP, criptografado (AES-256-GCM)
+  twoFactorPendingSecret String? // segredo em configuração, antes de confirmar
+  twoFactorBackupCodes String[] @default([]) // códigos de recuperação (hash sha-256)
+
+  organizationId    String?
+  organization      Organization? @relation("OrgMembers", fields: [organizationId], references: [id])
+  orgRole           OrgRole?
+
+  ownedOrganization Organization? @relation("OrgOwner")
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  sessions          Session[]
+  tokens            AuthToken[]
+  consents          Consent[]
+  analyses          Analysis[]     @relation("AnalysisOwner")
+  reviewsAssigned   LegalReview[]  @relation("ReviewReviewer")
+  ticketsOpened     SupportTicket[] @relation("TicketRequester")
+  ticketsAssigned   SupportTicket[] @relation("TicketAgent")
+  supportMessages   SupportMessage[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  // Movimentações de crédito lançadas manualmente por este usuário (admin).
+  ledgerActions     CreditLedger[] @relation("LedgerActor")
+  // Sessões de checkout do Asaas abertas por este usuário — ver AsaasCheckout.
+  asaasCheckouts    AsaasCheckout[]
+
+  @@index([organizationId])
+  @@index([role])
+  @@index([status])
+}
+
+model Organization {
+  id            String   @id @default(cuid())
+  name          String
+  documentEnc   String? // CNPJ criptografado
+  ownerId       String?  @unique
+  owner         User?    @relation("OrgOwner", fields: [ownerId], references: [id])
+  members       User[]   @relation("OrgMembers")
+
+  subscriptions Subscription[]
+  analyses      Analysis[]
+  documents     Document[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Sessões persistidas para permitir revogação individual/global.
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique // hash do token de sessão
+  userAgent    String?
+  ip           String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  // Último sinal de uso REAL da sessão — base do encerramento por inatividade.
+  //
+  // `expiresAt` é o prazo ABSOLUTO (a sessão morre nele, mexendo ou não). Esta
+  // coluna é outra coisa: mede quanto tempo faz que ninguém usa. Sem ela, a tela
+  // logada deixada aberta continuava válida por dias. Ver SESSION_IDLE_MINUTES em
+  // src/lib/env.ts e `sessaoInativa` em src/lib/auth.ts.
+  lastSeenAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Tokens de uso único (verificação de e-mail, recuperação/criação de senha, convite).
+model AuthToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       TokenType
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, type])
+}
+
+// ----------------------------------------------------------------------------
+// Planos, assinaturas e pagamentos
+// ----------------------------------------------------------------------------
+
+model Plan {
+  id                 String        @id @default(cuid())
+  slug               String        @unique
+  name               String
+  description        String?
+  active             Boolean       @default(true)
+  // Comercial
+  priceCents         Int           @default(0)
+  currency           String        @default("BRL")
+  period             BillingPeriod @default(MENSAL)
+  trialDays          Int           @default(0)
+  // Apresentação na página pública de planos.
+  // `family` agrupa as variantes mensal e anual do MESMO plano comercial
+  // (ex.: "essencial" reúne essencial-mensal e essencial-anual), que é o que
+  // permite a alternância Mensal/Anual sem duplicar a oferta na tela.
+  family             String?
+  highlight          Boolean       @default(false) // selo "MAIS ESCOLHIDO"
+  publicPlan         Boolean       @default(true) // aparece na página de planos
+  contactOnly        Boolean       @default(false) // "sob consulta" (Empresarial)
+  sortOrder          Int           @default(0)
+  benefits           String[]      @default([]) // itens exibidos no card
+  // Limites configuráveis pelo admin (sem editar código)
+  //
+  // ATENÇÃO À UNIDADE: `monthlyAnalyses` é a cota de CRÉDITOS por ciclo, não de
+  // análises. Um processo grande consome mais de um crédito (ver creditCost em
+  // src/lib/credits.ts). O nome foi mantido para não quebrar o histórico.
+  // 0 continua significando ilimitado, mas nenhum plano comercial usa isso:
+  // cada análise tem custo de API, então uso ilimitado não é sustentável.
+  monthlyAnalyses    Int           @default(0) // 0 = ilimitado
+  maxUsers           Int           @default(1)
+  storageMb          Int           @default(1024)
+  maxFileMb          Int           @default(25)
+  allowReports       Boolean       @default(true)
+  allowPetitions     Boolean       @default(true)
+  priorityProcessing Boolean       @default(false)
+  supportLevel       String        @default("padrao")
+  // LEGADO do gateway anterior (integração removida). As duas colunas são
+  // PRESERVADAS porque apagar coluna descarta dado de forma irreversível, mas
+  // nada mais as lê: o checkout do Asaas é criado em tempo de execução e amarrado
+  // à conta pelo `externalReference`. O seed grava vazio nas duas, para não
+  // sobrar link antigo apontando para uma conta que não é mais usada.
+  hotmartOfferCodes  String[]      @default([])
+  checkoutUrl        String?
+  features           Json?
+
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  subscriptions      Subscription[]
+  pendingFor         Subscription[] @relation("SubscriptionPendingPlan")
+
+  @@index([active])
+  @@index([family])
+}
+
+// Pacote de créditos avulsos, comprado fora da assinatura.
+model CreditPack {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  name              String
+  credits           Int
+  priceCents        Int
+  currency          String   @default("BRL")
+  // Validade dos créditos comprados, contada a partir da liberação.
+  validityDays      Int      @default(90)
+  active            Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  hotmartOfferCodes String[] @default([])
+  checkoutUrl       String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([active])
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  organizationId   String
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId           String
+  plan             Plan               @relation(fields: [planId], references: [id])
+  status           SubscriptionStatus @default(TESTE)
+  provider         PaymentProvider    @default(ASAAS)
+  externalRef      String? // id da assinatura/transação no provedor
+  amountCents      Int                @default(0) // valor cobrado (snapshot do plano na contratação)
+  startedAt        DateTime           @default(now())
+  currentPeriodEnd DateTime? // fim do período pago = próxima cobrança
+  canceledAt       DateTime?
+  canceledReason   String? // motivo do cancelamento
+
+  // ---------------------------------------------------------------------------
+  // PEDIDO DE PARADA — o cliente (ou o administrador por ele) disse para parar de
+  // cobrar. Existe como campo PRÓPRIO porque a decisão que ele governa é caríssima:
+  // dinheiro que chega depois de um pedido de parada é cobrança indevida e tem de
+  // ser devolvido, nunca virar acesso.
+  //
+  // Antes isto era inferido de `status === "CANCELADA"` mais o TEXTO de
+  // `canceledReason`. Quatro caminhos reescrevem esses dois campos — o webhook de
+  // atraso (INADIMPLENTE), o de exclusão de cobrança ("Cancelamento via Asaas", que
+  // o nosso próprio DELETE provoca), a reativação (que zerava os dois) e o estorno
+  // (ESTORNADA). Bastava um deles passar no meio para o pedido de parada
+  // desaparecer e a cobrança seguinte ressuscitar a assinatura. A garantia se
+  // desarmava sozinha, e o cliente que pediu para parar voltava a ATIVA.
+  //
+  // Só duas coisas limpam este campo: uma contratação NOVA de verdade (o cliente
+  // voltou por vontade própria) e nada mais.
+  // ---------------------------------------------------------------------------
+  canceledByRequestAt DateTime?
+  suspendedAt      DateTime? // quando o acesso foi suspenso por inadimplência
+  reactivatedAt    DateTime? // última reativação após regularização
+  // ---------------------------------------------------------------------------
+  // Créditos. A unidade é o CRÉDITO, não a análise: um processo grande consome
+  // mais de um (ver creditCost em src/lib/credits.ts). Os três campos abaixo
+  // são o saldo corrente; a história completa e auditável fica em CreditLedger.
+  // ---------------------------------------------------------------------------
+  analysesUsed     Int                @default(0) // créditos mensais consumidos no ciclo
+  analysesQuota    Int                @default(0) // créditos liberados por ciclo (0 = ilimitado, só legado)
+  extraAnalyses    Int                @default(0) // saldo de pacotes avulsos (expira por validade própria)
+
+  // Ciclo de CRÉDITOS. Distinto de currentPeriodEnd de propósito: no plano anual
+  // o cliente paga uma vez e o acesso vai até currentPeriodEnd, mas os créditos
+  // continuam sendo liberados mês a mês — nunca todos de uma vez.
+  cycleEndsAt      DateTime?
+  creditsReleasedAt DateTime? // última liberação de créditos mensais
+  nextRenewalAt    DateTime? // próxima cobrança (exibida ao cliente)
+  // Tolerância de inadimplência: até esta data o acesso continua mesmo atrasado.
+  graceUntil       DateTime?
+  maxUsers         Int                @default(1) // snapshot do plano na contratação
+
+  // Revisão de estorno/contestação prorrogada: marca a data da comunicação ao
+  // assinante. A Política de Cancelamento admite UMA prorrogação por igual período, e
+  // é este campo que distingue a prorrogação legítima do simples esquecimento — sem
+  // ele, o restabelecimento automático por decurso de prazo atropelaria uma revisão
+  // que foi regularmente prorrogada.
+  revisaoProrrogadaEm DateTime?
+
+  // Downgrade agendado: o plano atual vale até o fim do ciclo pago, e este passa
+  // a valer na renovação seguinte.
+  pendingPlanId    String?
+  pendingPlan      Plan?              @relation("SubscriptionPendingPlan", fields: [pendingPlanId], references: [id])
+  pendingPlanAt    DateTime?
+
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  payments         Payment[]
+  consumption      ConsumptionRecord[]
+  ledger           CreditLedger[]
+  aiUsage          AiUsageRecord[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([cycleEndsAt])
+}
+
+model Payment {
+  id             String          @id @default(cuid())
+  subscriptionId String?
+  subscription   Subscription?   @relation(fields: [subscriptionId], references: [id])
+  provider       PaymentProvider @default(ASAAS)
+  externalId     String? // id da transação no provedor
+  status         PaymentStatus
+  amountCents    Int             @default(0)
+  currency       String          @default("BRL")
+  method         String? // forma de pagamento (cartão, pix, boleto...)
+  paidAt         DateTime?
+  raw            Json?
+  createdAt      DateTime        @default(now())
+
+  ledger         CreditLedger[]
+
+  @@index([subscriptionId])
+  @@index([status])
+}
+
+// LEGADO. Eventos brutos do gateway anterior (Hotmart), integração removida.
+// A tabela é PRESERVADA de propósito: pode conter histórico de eventos de
+// pagamento, e apagar registro financeiro é irreversível. Nenhum código escreve
+// ou lê daqui. Só deve ser removida depois de conferir que está vazia.
+model HotmartEvent {
+  id           String             @id @default(cuid())
+  externalId   String             @unique // id do evento na Hotmart (idempotência)
+  eventType    String // PURCHASE_APPROVED, PURCHASE_REFUNDED, ...
+  status       HotmartEventStatus @default(RECEBIDO)
+  buyerEmail   String?
+  offerCode    String?
+  productId    String?
+  payload      Json
+  processedAt  DateTime?
+  errorMessage String?
+  createdAt    DateTime           @default(now())
+
+  @@index([eventType])
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// Análises e processos
+// ----------------------------------------------------------------------------
+
+model Analysis {
+  id               String         @id @default(cuid())
+  organizationId   String
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ownerId          String
+  owner            User           @relation("AnalysisOwner", fields: [ownerId], references: [id])
+
+  title            String
+  type             AnalysisType   @default(GERAL)
+  status           AnalysisStatus @default(RASCUNHO)
+  objective        String?
+
+  // ---------------------------------------------------------------------------
+  // SINAL DE VIDA do processamento. Gravado pelo motor a cada etapa e a cada
+  // documento extraído, e lido para descobrir execução que MORREU sem passar pelo
+  // tratamento de erro — deploy no meio, tempo limite da requisição, falta de
+  // memória. Nesses casos o `catch` não roda: o status fica preso em PROCESSANDO, o
+  // crédito fica debitado e a análise não pode ser retomada.
+  //
+  // Campo PRÓPRIO, e não `updatedAt`: aquele marca a última escrita QUALQUER na linha,
+  // então uma edição de título durante o processamento fingiria progresso, e o que
+  // interessa aqui é só o que o motor reporta. Ver src/lib/analise-travada.ts.
+  // ---------------------------------------------------------------------------
+  heartbeatAt      DateTime?
+
+  // Dados processuais informados pelo usuário (opcionais — podem vir dos documentos)
+  processNumber    String?
+  court            String?
+  jurisdiction     String? // seção/comarca
+  courtDivision    String? // vara
+  creditor         String? // exequente
+  debtor           String? // executado
+  debtorDocEnc     String? // CPF/CNPJ do executado (criptografado)
+  taxType          String?
+  publicEntity     String?
+  cdaNumber        String?
+  dividaAtivaNumber String?
+  approxValueCents Int?
+
+  // Datas processuais informadas (as extraídas ficam em TimelineEvent)
+  facts            Json? // objeto com datas informadas (fato gerador, constituição, citação, etc.)
+
+  confidence       ConfidenceLevel @default(INDETERMINADO)
+  aiModel          String?
+  promptVersionId  String?
+  promptVersion    PromptVersion?  @relation(fields: [promptVersionId], references: [id])
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  completedAt      DateTime?
+
+  // Custo em créditos desta análise (1 para o processo padrão; mais para
+  // processos grandes). Guardado para o extrato e para o estorno em caso de erro.
+  creditsCharged   Int            @default(0)
+  pageCount        Int? // total de páginas dos documentos anexados
+  fileBytes        Int? // soma dos tamanhos dos arquivos
+  // Contador de reprocessamentos, para conter reprocesso ilimitado.
+  reprocessCount   Int            @default(0)
+
+  documents        Document[]
+  timeline         TimelineEvent[]
+  reports          Report[]
+  petitions        Petition[]
+  review           LegalReview?
+  consumption      ConsumptionRecord[]
+  ledger           CreditLedger[]
+  aiUsage          AiUsageRecord[]
+
+  @@index([organizationId])
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Document {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  analysisId     String?
+  analysis       Analysis?      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  // Chave no armazenamento privado (nunca URL pública).
+  storageKey     String
+  checksum       String? // sha-256 para detectar duplicidade
+  status         DocumentStatus @default(RECEBIDO)
+  pageCount      Int?
+  // Texto extraído fica em DocumentPage; resumo aqui.
+  ocrApplied     Boolean        @default(false)
+  notes          String?
+
+  createdAt      DateTime       @default(now())
+  deletedAt      DateTime?
+
+  pages          DocumentPage[]
+
+  @@index([analysisId])
+  @@index([checksum])
+}
+
+model DocumentPage {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber Int
+  text       String   @db.Text
+  legible    Boolean  @default(true)
+
+  @@unique([documentId, pageNumber])
+  @@index([documentId])
+}
+
+// Evento da linha do tempo processual. Preserva histórico: correções geram
+// novo registro com supersededById apontando para o anterior.
+model TimelineEvent {
+  id             String            @id @default(cuid())
+  analysisId     String
+  analysis       Analysis          @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  eventDate      DateTime?
+  dateText       String? // data conforme aparece no documento (quando não parseável)
+  type           TimelineEventType @default(SEM_EFEITO_DEFINIDO)
+  nature         FactNature        @default(FATO_CONFIRMADO)
+  description    String
+  legalEffect    String? // efeito jurídico possível
+  sourceDocId    String?
+  sourcePage     Int?
+  observation    String?
+
+  // Versionamento não destrutivo
+  createdByRole  Role?
+  supersededById String?           @unique
+  supersededBy   TimelineEvent?    @relation("Superseded", fields: [supersededById], references: [id])
+  supersedes     TimelineEvent?    @relation("Superseded")
+
+  createdAt      DateTime          @default(now())
+
+  @@index([analysisId])
+  @@index([type])
+}
+
+// ----------------------------------------------------------------------------
+// Relatórios e peças (com versionamento)
+// ----------------------------------------------------------------------------
+
+model Report {
+  id          String          @id @default(cuid())
+  analysisId  String
+  analysis    Analysis        @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  version     Int             @default(1)
+  confidence  ConfidenceLevel @default(INDETERMINADO)
+  // Conteúdo estruturado (JSON) + render em markdown para exibição/exportação.
+  content     Json
+  markdown    String          @db.Text
+  aiModel     String?
+  createdAt   DateTime        @default(now())
+
+  @@unique([analysisId, version])
+  @@index([analysisId])
+}
+
+model Petition {
+  id          String       @id @default(cuid())
+  analysisId  String
+  analysis    Analysis     @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  type        PetitionType
+  version     Int          @default(1)
+  title       String
+  markdown    String       @db.Text
+  // Campos não localizados que exigem preenchimento manual.
+  pendingFields Json?
+  editedByUser Boolean     @default(false)
+  aiModel     String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([analysisId, type, version])
+  @@index([analysisId])
+}
+
+// Revisão jurídica humana de uma análise.
+model LegalReview {
+  id           String       @id @default(cuid())
+  analysisId   String       @unique
+  analysis     Analysis     @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  reviewerId   String?
+  reviewer     User?        @relation("ReviewReviewer", fields: [reviewerId], references: [id])
+  status       ReviewStatus @default(PENDENTE)
+  notes        String?      @db.Text
+  risks        String?      @db.Text
+  divergences  String?      @db.Text
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  decidedAt    DateTime?
+
+  @@index([reviewerId])
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// Consumo do plano (auditável)
+// ----------------------------------------------------------------------------
+
+model ConsumptionRecord {
+  id             String       @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  analysisId     String?
+  analysis       Analysis?    @relation(fields: [analysisId], references: [id])
+  kind           String // "analise" | "relatorio" | "peca" | "pagina" | "ia_tokens" | "armazenamento"
+  quantity       Int          @default(1)
+  aiInputTokens  Int?
+  aiOutputTokens Int?
+  createdAt      DateTime     @default(now())
+
+  @@index([subscriptionId])
+  @@index([kind])
+}
+
+// ----------------------------------------------------------------------------
+// Razão de créditos — extrato completo e auditável
+// ----------------------------------------------------------------------------
+
+// Cada linha é uma movimentação de crédito, com o saldo antes e depois. É a
+// fonte de verdade: os contadores em Subscription são o saldo corrente, mas
+// qualquer divergência se resolve relendo esta tabela.
+//
+// `idempotencyKey` é o que impede crédito em dobro quando o gateway reenvia o
+// mesmo evento — a chave carrega o ciclo, não o id do evento, então dois
+// eventos distintos do mesmo mês também não duplicam.
+model CreditLedger {
+  id             String             @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription       @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  kind           CreditMovementKind
+  bucket         CreditBucket? // de qual bolsa saiu/entrou
+  // Positivo = entrada; negativo = saída. Sempre em créditos inteiros.
+  quantity       Int
+  balanceBefore  Int
+  balanceAfter   Int
+  description    String
+
+  analysisId     String?
+  analysis       Analysis?          @relation(fields: [analysisId], references: [id], onDelete: SetNull)
+  paymentId      String?
+  payment        Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  // Preenchidos apenas em movimentação manual da administração.
+  actorId        String?
+  actor          User?              @relation("LedgerActor", fields: [actorId], references: [id])
+  reason         String?
+
+  // Validade dos créditos desta entrada (pacotes avulsos: 90 dias).
+  expiresAt      DateTime?
+  idempotencyKey String?            @unique
+
+  createdAt      DateTime           @default(now())
+
+  @@index([subscriptionId, createdAt])
+  @@index([kind])
+  @@index([analysisId])
+  @@index([expiresAt])
+}
+
+// Custo de API por análise — base dos indicadores administrativos.
+// Nunca é exposto ao cliente: ele vê créditos, não tokens.
+model AiUsageRecord {
+  id             String        @id @default(cuid())
+  organizationId String?
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  analysisId     String?
+  analysis       Analysis?     @relation(fields: [analysisId], references: [id], onDelete: SetNull)
+  userId         String?
+  planSlug       String?
+
+  provider       String // "openai" | "anthropic" | "heuristica"
+  model          String
+  inputTokens    Int           @default(0)
+  outputTokens   Int           @default(0)
+  // Custo estimado em centavos de BRL, calculado na gravação a partir da
+  // tabela de preços vigente (ver src/lib/ai/custos.ts).
+  costCents      Int           @default(0)
+  calls          Int           @default(1)
+  durationMs     Int?
+
+  pageCount      Int?
+  fileBytes      Int?
+  creditsCharged Int           @default(0)
+  reprocess      Boolean       @default(false)
+  errored        Boolean       @default(false)
+  errorMessage   String?
+
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId])
+  @@index([analysisId])
+  @@index([createdAt])
+  @@index([planSlug])
+}
+
+// ----------------------------------------------------------------------------
+// Base de conhecimento e prompts versionados
+// ----------------------------------------------------------------------------
+
+model KnowledgeDocument {
+  id           String            @id @default(cuid())
+  title        String
+  category     KnowledgeCategory
+  description  String?
+  theme        String?
+  version      String            @default("1.0")
+  active       Boolean           @default(true)
+  source       String? // origem/proprietário do documento
+  storageKey   String? // arquivo privado (quando houver)
+  content      String?           @db.Text // texto indexável (quando aplicável)
+  createdBy    String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  revisions    KnowledgeRevision[]
+
+  @@index([category])
+  @@index([active])
+}
+
+model KnowledgeRevision {
+  id                  String            @id @default(cuid())
+  knowledgeDocumentId String
+  knowledgeDocument   KnowledgeDocument @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Cascade)
+  version             String
+  changeNote          String?
+  changedBy           String?
+  createdAt           DateTime          @default(now())
+
+  @@index([knowledgeDocumentId])
+}
+
+// Versões das instruções/prompts da IA — ativáveis/desativáveis e auditáveis.
+model PromptVersion {
+  id          String     @id @default(cuid())
+  kind        PromptKind
+  version     Int
+  label       String?
+  content     String     @db.Text
+  active      Boolean    @default(false)
+  notes       String?
+  createdBy   String?
+  createdAt   DateTime   @default(now())
+
+  analyses    Analysis[]
+
+  @@unique([kind, version])
+  @@index([kind, active])
+}
+
+// ----------------------------------------------------------------------------
+// Suporte
+// ----------------------------------------------------------------------------
+
+model SupportTicket {
+  id          String         @id @default(cuid())
+  number      Int            @unique @default(autoincrement())
+  requesterId String
+  requester   User           @relation("TicketRequester", fields: [requesterId], references: [id])
+  agentId     String?
+  agent       User?          @relation("TicketAgent", fields: [agentId], references: [id])
+  subject     String
+  category    String?
+  priority    TicketPriority @default(MEDIA)
+  status      TicketStatus   @default(ABERTO)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  resolvedAt  DateTime?
+
+  messages    SupportMessage[]
+
+  @@index([status])
+  @@index([requesterId])
+}
+
+model SupportMessage {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User          @relation(fields: [authorId], references: [id])
+  body      String        @db.Text
+  attachmentKey String?
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
+}
+
+// ----------------------------------------------------------------------------
+// Notificações, consentimentos, configurações
+// ----------------------------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt])
+}
+
+model Consent {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      ConsentType
+  version   String // versão do documento aceito
+  grantedAt DateTime    @default(now())
+  ip        String?
+  userAgent String?
+
+  @@index([userId, type])
+}
+
+// Configurações do sistema editáveis pelo admin (chave/valor com JSON).
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+// Conteúdo editável do site (páginas públicas, FAQ, planos, e-mails).
+model ContentBlock {
+  id        String   @id @default(cuid())
+  slug      String   @unique // ex.: "home.hero", "faq", "email.compra_aprovada"
+  locale    String   @default("pt-BR")
+  data      Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// Auditoria e segurança
+// ----------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorRole  Role?
+  action     String // ex.: "auth.login", "analysis.create", "asaas.subscription.activated"
+  entityType String?
+  entityId   String?
+  // Metadados NÃO sensíveis (sem senhas, tokens ou documentos completos).
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model SecurityEvent {
+  id        String   @id @default(cuid())
+  type      String // "login_failed", "rate_limited", "account_locked", "webhook_invalid"
+  email     String?
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([createdAt])
+}
+
+// Sessão de checkout do Asaas → conta que está comprando.
+//
+// ── Por que esta tabela existe ────────────────────────────────────────────────
+// O Asaas NÃO devolve o nosso `externalReference` nos eventos de cobrança
+// recorrente. Verificado na API em 01/08/2026, com o pagamento real de R$ 39,90:
+// o campo vem nulo no pagamento E na assinatura (`GET /subscriptions/{id}`
+// respondeu 200 com `externalReference: null`). Sem esta tabela não há como saber
+// de quem é o dinheiro, e foi assim que o primeiro pagamento real do produto
+// entrou no gateway sem liberar nada.
+//
+// A assinatura criada pelo checkout traz `checkoutSession` — o id da sessão que
+// NÓS criamos. Guardando esse id aqui no momento do checkout, o vínculo passa a
+// ser determinístico e não depende de o provedor devolver nenhum dado nosso.
+//
+// Por que NÃO casar pelo e-mail do pagador: no pagamento real, o e-mail digitado
+// no formulário do Asaas foi `cliente@exemplo.com` enquanto a conta que
+// comprou era `cliente+pagto@exemplo.com` — e a primeira havia sido apagada
+// no mesmo dia. Casar por e-mail teria creditado a conta errada. Serve como pista
+// para o suporte, nunca como vínculo automático.
+//
+model AsaasCheckout {
+  // Id da sessão de checkout no Asaas (o mesmo que aparece na URL de pagamento).
+  id        String   @id
+  // "plano", "pacote" ou "upgrade" — o que está sendo comprado.
+  tipo      String
+  // Slug do plano ou do pacote.
+  slug      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}

@@ -1,0 +1,38 @@
+# =============================================================================
+# Fim de linha — uma convenção só, decidida aqui e não pela máquina de quem edita
+# -----------------------------------------------------------------------------
+# O projeto é trabalhado em Windows e em Mac ao mesmo tempo. Windows termina linha
+# com CRLF, Mac e Linux com LF, e sem este arquivo cada `git` resolve isso por
+# conta própria: o Windows avisava "LF will be replaced by CRLF" em todo commit, e
+# bastava um lado gravar com a convenção dele para o arquivo INTEIRO aparecer como
+# modificado no outro — centenas de linhas alteradas onde ninguém mudou nada.
+#
+# Isso não é cosmético. Diferença falsa esconde a diferença verdadeira: o commit de
+# uma linha de conserto fica indistinguível do commit que só trocou fim de linha, e
+# revisar deixa de ser possível. É também o que transforma um conflito trivial em
+# conflito de arquivo inteiro.
+#
+# `eol=lf` fixa LF também na cópia de trabalho do Windows, o que encerra os avisos.
+# Editor moderno (VS Code, JetBrains) lida com LF no Windows sem nada a configurar.
+# =============================================================================
+* text=auto eol=lf
+
+# -----------------------------------------------------------------------------
+# Binários: NUNCA converter. Trocar bytes de fim de linha dentro de imagem, fonte
+# ou planilha corrompe o arquivo, e o estrago é silencioso — a imagem simplesmente
+# deixa de abrir, sem erro em lugar nenhum.
+# -----------------------------------------------------------------------------
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.pdf  binary
+*.eps  binary
+*.xlsx binary
+*.zip  binary

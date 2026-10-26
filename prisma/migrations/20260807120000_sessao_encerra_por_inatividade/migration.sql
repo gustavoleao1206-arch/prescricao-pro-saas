@@ -1,0 +1,18 @@
+-- ---------------------------------------------------------------------------
+-- Encerramento de sessão por INATIVIDADE.
+--
+-- `Session.expiresAt` é o prazo ABSOLUTO: a sessão morre nele, tenha sido usada ou
+-- não. Hoje vale 7 dias (SESSION_MAX_AGE). Isso não cobre o risco que importa —
+-- a tela logada deixada aberta e sem ninguém na frente —, porque o prazo absoluto
+-- não sabe se alguém está usando.
+--
+-- `lastSeenAt` mede a outra coisa: quanto tempo faz que a sessão foi usada de fato.
+--
+-- O padrão é `now()` de propósito, e não a data de criação da sessão. Preenchendo
+-- com `createdAt`, toda sessão criada há mais de meia hora seria invalidada no
+-- instante do deploy, e todo mundo que estivesse trabalhando cairia no meio da
+-- tarefa — inclusive quem estivesse revisando uma análise. Com `now()` a regra
+-- passa a valer daqui para frente: quem está usando continua, e a próxima meia
+-- hora de silêncio encerra.
+-- ---------------------------------------------------------------------------
+ALTER TABLE "Session" ADD COLUMN "lastSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;

@@ -1,0 +1,503 @@
+# =============================================================================
+# Blueprint do Render — Prescrição Pro
+# -----------------------------------------------------------------------------
+# Descreve a infraestrutura inteira (banco + site + cron + fila + worker) em um
+# arquivo. No painel: New → Blueprint → conecte o repositório. O Render lê este
+# arquivo, cria os recursos e pergunta apenas os valores marcados `sync: false`.
+#
+# IMPORTANTE: a imagem Docker é construída NOS SERVIDORES DO RENDER. Não é
+# preciso ter Docker funcionando na sua máquina para publicar.
+# =============================================================================
+
+databases:
+  - name: prescricao-pro-db
+    databaseName: prescricao_pro
+    user: prescricao_pro
+    region: oregon
+    # `free` expira 30 dias após a criação e o banco é APAGADO. Para um produto
+    # pago isso não serve: `basic-256mb` é o menor plano permanente.
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    # Sem acesso externo: só os serviços deste blueprint conectam (rede interna).
+    # Para rodar o seed ou o Prisma Studio da sua máquina, adicione seu IP aqui
+    # temporariamente no painel (Database → Access Control).
+    ipAllowList: []
+
+services:
+  # --- Site -----------------------------------------------------------------
+  - type: web
+    name: prescricao-pro
+    runtime: docker
+    region: oregon
+    # `free` hiberna após 15 min sem acesso e a primeira visita depois disso
+    # espera ~1 min pelo religamento — inaceitável para cliente pagante.
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # A home é pública (site institucional), então serve de health check.
+    healthCheckPath: /
+    autoDeploy: true
+    # NÃO aumente sem antes migrar o rate limit para o Redis: ele é em memória
+    # (src/lib/rate-limit.ts) — com duas instâncias cada uma teria a sua
+    # contagem, e o limite deixaria de valer. A FILA já pode sair do processo
+    # (ver QUEUE_DRIVER abaixo e o serviço `prescricao-pro-worker`).
+    numInstances: 1
+
+    envVars:
+      # --- Banco: injetado pelo próprio Render (rede interna) ---------------
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prescricao-pro-db
+          property: connectionString
+
+      # --- Aplicação -------------------------------------------------------
+      - key: NODE_ENV
+        value: production
+      - key: APP_NAME
+        value: Prescrição Pro
+      # Domínio próprio (registrado na HostGator). Usada em e-mails, links de
+      # recuperação de senha, cookies e no retorno do checkout. Enquanto o DNS
+      # não estiver apontado e o certificado emitido, o site responde também
+      # pelo endereço .onrender.com — mas os links de e-mail já saem com este.
+      - key: APP_URL
+        value: https://prescricaopro.com.br
+
+      # --- Segredos --------------------------------------------------------
+      # Assina a sessão (JWT); qualquer string longa aleatória serve.
+      - key: AUTH_SECRET
+        generateValue: true
+      # Criptografa CPF/CNPJ em repouso (AES-256-GCM). Precisa ser EXATAMENTE
+      # 32 bytes em base64 — por isso não usa `generateValue`, que não garante
+      # esse tamanho e faria a aplicação lançar erro ao gravar o primeiro CPF.
+      # Gere com:  openssl rand -base64 32
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+
+      # --- Inteligência artificial -----------------------------------------
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: "4000"
+      # Tetos reduzidos por causa do limite de tokens por minuto do Tier 1 da
+      # OpenAI (30 mil TPM). Ao subir de tier, aumente para a IA ler mais do
+      # processo. A explicação do orçamento está em src/lib/env.ts.
+      - key: AI_MAX_KNOWLEDGE_CHARS
+        value: "16000"
+      - key: AI_MAX_CORPUS_CHARS
+        value: "24000"
+      # 2, não os 4 do desenvolvimento: a instância `starter` tem 512 MB de RAM e
+      # o OCR é o trecho mais pesado da aplicação — o Ghostscript rasteriza a
+      # página e cada Tesseract em paralelo carrega a sua própria imagem, ao
+      # lado do Next.js no mesmo contêiner. Com 4 em paralelo há risco real de
+      # a instância ser derrubada por falta de memória no meio de uma análise.
+      # Se processos digitalizados grandes ainda falharem, o caminho é subir a
+      # instância para `standard` (2 GB), não voltar a concorrência para 4.
+      - key: OCR_CONCORRENCIA
+        value: "2"
+      # Câmbio usado apenas para estimar custo de API em reais no painel admin.
+      - key: USD_BRL
+        value: "5.60"
+
+      # --- Limites de envio de arquivo -------------------------------------
+      # Teto do ENVIO INTEIRO. Existe porque UPLOAD_MAX_FILES x UPLOAD_MAX_FILE_MB
+      # daria 500 MB numa requisição só, e esta instância tem 512 MB e atende
+      # todos os clientes ao mesmo tempo. Cabe a cópia integral de um processo
+      # (o maior conhecido tem 166 páginas) e continua possível enviar em partes.
+      - key: UPLOAD_MAX_REQUEST_MB
+        value: "60"
+      # Teto de páginas que a leitura de PDF percorre. A leitura roda DENTRO do
+      # processo que serve o site: enquanto percorre, não atende mais ninguém —
+      # nem o webhook do Asaas, cuja fila para no primeiro evento que falha.
+      # 1500 fica acima de todo processo conhecido e abaixo do que derruba a
+      # máquina. Se algum cliente legítimo for recusado, aumente AQUI: o valor
+      # chega em produção pelo push, sem mexer no painel.
+      - key: UPLOAD_MAX_PAGINAS
+        value: "1500"
+
+      # --- Content-Security-Policy -----------------------------------------
+      # "relatorio": o navegador NÃO bloqueia nada, só avisa o que teria
+      # bloqueado, e o aviso vai para o log deste serviço (procure por "[csp]").
+      # "bloqueio": passa a bloquear de verdade.
+      #
+      # BLOQUEIO desde set/2026. Ficou em "relatorio" enquanto ninguém tinha
+      # exercitado as telas privadas — e a espera não era por tempo, era por
+      # informação: o log de produção só mostraria violação depois de alguém
+      # usar o painel e o admin.
+      #
+      # Em vez de esperar, o sistema foi subido LOCALMENTE já em bloqueio, com
+      # banco descartável e conta de teste, e as telas foram percorridas uma a
+      # uma. Resultado: 14 rotas públicas + 8 privadas todas sob bloqueio, as 8
+      # privadas com a CSP estrita (nonce + hash, sem 'unsafe-inline' e sem
+      # 'unsafe-eval'), as 10 seções do admin abertas, e a ativação de 2FA —
+      # que era o ponto citado como não testável — funcionando, inclusive o QR
+      # em `data:` que depende de `img-src data:`. Zero violações.
+      #
+      # E o "zero" não é vazio: injetei de propósito um <script> inline sem
+      # nonce; ele NÃO executou e a violação foi capturada. Sem essa
+      # contraprova, "nenhuma violação" também seria o resultado de uma CSP
+      # que não estivesse valendo.
+      #
+      # ⚠️ Errar uma diretiva aqui deixa o site vivo e inerte — páginas
+      # aparecem e nada funciona — para todos os clientes de uma vez, porque o
+      # deploy é automático. Voltar atrás é trocar esta linha para "relatorio"
+      # e dar push; leva um deploy.
+      - key: CSP_MODO
+        value: "bloqueio"
+
+      # --- Armazenamento de documentos -------------------------------------
+      # O disco do contêiner é EFÊMERO: com `local`, todo PDF enviado pelo
+      # cliente desaparece no próximo deploy. Bucket privado é obrigatório.
+      # Cloudflare R2 tem cota gratuita e fala o protocolo S3.
+      - key: STORAGE_DRIVER
+        value: s3
+      # Endpoint do R2: https://<ID_DA_CONTA>.r2.cloudflarestorage.com
+      - key: S3_ENDPOINT
+        sync: false
+      # O R2 não tem regiões geográficas como a AWS; o valor correto é "auto".
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        value: prescricao-pro-documentos
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SIGNED_URL_TTL
+        value: "300"
+
+      # --- E-mail transacional ---------------------------------------------
+      # ATENÇÃO: `onboarding@resend.dev` (usado em desenvolvimento) só entrega
+      # para o e-mail do titular da conta Resend. Em produção é preciso um
+      # domínio verificado no Resend, senão nenhum cliente recebe verificação
+      # de conta nem recuperação de senha.
+      - key: EMAIL_DRIVER
+        value: resend
+      - key: EMAIL_FROM
+        value: "Prescrição Pro <no-reply@prescricaopro.com.br>"
+      # Onde chegam os alertas de dinheiro que precisa de decisão humana: pagamento
+      # que entrou sem conta identificada e cobrança recebida após o cancelamento.
+      # É o endereço que alguém LÊ — vazio, cai no contato do fornecedor.
+      - key: OPERACAO_EMAIL
+        value: contato@leaoamorim.adv.br
+      - key: RESEND_API_KEY
+        sync: false
+
+      # --- Pagamento (Asaas) -----------------------------------------------
+      # Webhook a apontar no Asaas: {APP_URL}/api/webhooks/asaas
+      # Eventos a marcar: PAYMENT_CONFIRMED, PAYMENT_RECEIVED, PAYMENT_OVERDUE,
+      # PAYMENT_REFUNDED, PAYMENT_CHARGEBACK_REQUESTED e PAYMENT_DELETED — são
+      # os que `classificar()` em src/lib/asaas.ts sabe tratar. Evento não
+      # marcado no painel simplesmente nunca chega.
+      #
+      # ⚠️ O ambiente é a configuração mais perigosa deste arquivo: `env.ts`
+      # assume "sandbox" quando ASAAS_ENV não vem definida, e sandbox NÃO cobra
+      # ninguém. Sem esta linha, o checkout de produção criaria cobranças de
+      # teste, o cliente veria a tela de pagamento funcionando e nenhum centavo
+      # seria faturado. A falha é silenciosa: não há erro para aparecer no log.
+      - key: ASAAS_ENV
+        value: production
+      # Chave de API do ambiente de PRODUÇÃO. A de sandbox não autentica contra
+      # api.asaas.com — usar uma com a URL da outra devolve erro de autenticação.
+      - key: ASAAS_API_KEY
+        sync: false
+      # Token que você inventa ao criar o webhook no painel do Asaas. Tem de ser
+      # exatamente o mesmo valor nos dois lados: divergência faz o webhook
+      # recusar tudo com 401 e nenhum pagamento libera acesso.
+      - key: ASAAS_WEBHOOK_TOKEN
+        sync: false
+
+      # --- Fila ------------------------------------------------------------
+      # `async` devolve a requisição na hora e o cliente acompanha por polling.
+      # Com `sync` a análise inteira (OCR + IA) roda dentro da requisição HTTP
+      # e uma análise longa corre o risco de estourar o tempo do balanceador,
+      # mostrando erro ao cliente mesmo com o processamento indo bem.
+      # --- Fila de análises -------------------------------------------------
+      # `async` = a análise roda DENTRO deste processo, competindo com quem está
+      # navegando no site. `bullmq` = vai para o Redis e o worker (serviço
+      # `prescricao-pro-worker`) processa em processo separado.
+      #
+      # ⚠️ TROCA EM DOIS PUSHES, de propósito:
+      #   1. (feito) Redis + worker entram no blueprint com o web ainda em
+      #      `async`. O worker sobe, conecta ao Redis e fica ocioso. Nada muda
+      #      para o cliente; dá para conferir nos Logs do worker que ele está
+      #      "escutando".
+      #   2. Trocar esta linha para `bullmq`. A partir daí toda análise nova vai
+      #      para o worker. Se o Redis estiver fora, o enfileiramento falha ALTO
+      #      (rota devolve erro, análise marcada com erro, crédito não debitado)
+      #      em vez de travar — ver src/lib/queue/queue.ts.
+      #
+      # Por que não num push só: se o worker nascesse sem alguma variável, as
+      # análises iriam para uma fila que ninguém processa direito, e o sintoma
+      # apareceria no cliente. Assim o worker é observado antes de receber
+      # trabalho.
+      - key: QUEUE_DRIVER
+        value: async
+      - key: REDIS_URL
+        fromService:
+          name: prescricao-pro-fila
+          type: keyvalue
+          property: connectionString
+
+      # --- Sessão: encerramento por inatividade ------------------------------
+      # `SESSION_MAX_AGE` (7 dias, padrão do código) é o prazo ABSOLUTO. Estes dois
+      # são outra coisa: medem quanto tempo faz que ninguém usa, e é o que protege
+      # a tela logada deixada aberta — o computador do escritório com autos de
+      # execução fiscal na frente de quem passar.
+      #
+      # São dois prazos, e o que os separa é DE QUEM são os dados na tela. O
+      # cliente vê os próprios processos; a equipe (administrador, revisor e
+      # suporte) vê os de outras pessoas — o revisor lê os autos inteiros, e do
+      # painel de administração se apaga conta, se libera acesso à mão, se ajusta
+      # crédito e se encerra caso de dinheiro. Tela de equipe esquecida aberta
+      # expõe dado de terceiro coberto por sigilo profissional.
+      #
+      # Zero desliga a regra. Pôr o prazo da equipe MAIOR que o do cliente não tem
+      # efeito: o código toma o menor dos dois, para duas variáveis independentes
+      # não acabarem contradizendo a intenção em silêncio.
+      - key: SESSION_IDLE_MINUTES
+        value: "30"
+      - key: SESSION_IDLE_MINUTES_EQUIPE
+        value: "10"
+
+      - key: LOG_LEVEL
+        value: info
+
+      # --- Seed inicial (usado UMA vez, pelo Shell do Render) ---------------
+      # Defina com credenciais suas de verdade. Nunca as de demonstração.
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+
+  # --- Cron de manutenção ---------------------------------------------------
+  # Expira créditos vencidos, encerra ciclos, libera a cota dos planos anuais e
+  # RECONCILIA os pagamentos que o webhook não entregou. Usa a MESMA imagem do
+  # site (o Dockerfile já inclui `tsx`, `src/` e `scripts/` para isso).
+  #
+  # ⚠️ As variáveis do Asaas e de e-mail NÃO são opcionais aqui, e a falta delas
+  # é silenciosa — foi o defeito que este bloco conserta.
+  #
+  # Duas tarefas deste cron FALAM com o Asaas: `encerrarBoletosVencidos`, que
+  # pergunta se o boleto foi pago antes de encerrar (passo irreversível não se
+  # toma com informação faltando), e `reconciliarPagamentos`, que libera acesso
+  # de quem pagou e cujo evento se perdeu. Sem ASAAS_API_KEY as duas respondem
+  # "não consegui perguntar": todo boleto vencido fica ADIADO para sempre — a
+  # assinatura nunca é encerrada — e nenhum pagamento é recuperado. O log não
+  # acusa erro, porque tecnicamente nada falhou.
+  #
+  # E os alertas: este cron é quem descobre dinheiro sem destino e pagamento
+  # recuperado. Sem EMAIL_DRIVER e RESEND_API_KEY o alerta é gravado no banco e
+  # nunca chega a uma pessoa — que é exatamente o defeito que `alertarOperacao`
+  # existe para consertar.
+  - type: cron
+    name: prescricao-pro-creditos
+    runtime: docker
+    region: oregon
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # O agendamento do Render é em UTC: 06:00 UTC = 03:00 em Brasília.
+    #
+    # Para reconciliar mais de uma vez por dia, troque por algo como "0 */3 * * *"
+    # (a cada 3 horas). O limite é o custo: o Render cobra pelo tempo de execução
+    # de cada disparo, e as demais tarefas daqui não precisam dessa frequência.
+    schedule: "0 6 * * *"
+    dockerCommand: npx tsx --tsconfig tsconfig.scripts.json scripts/manutencao-creditos.ts
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prescricao-pro-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      # Reaproveita os segredos do site: src/lib/env.ts exige AUTH_SECRET em
+      # produção, então sem isto o cron falharia no boot.
+      - key: AUTH_SECRET
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: AUTH_SECRET
+      - key: FIELD_ENCRYPTION_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: FIELD_ENCRYPTION_KEY
+
+      # --- Asaas: sem isto as duas tarefas que consultam o provedor não agem ---
+      # `fromService` copia o valor já definido no site: nada novo a digitar no
+      # painel, e não há como as duas cópias divergirem.
+      - key: ASAAS_ENV
+        value: production
+      - key: ASAAS_API_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: ASAAS_API_KEY
+
+      # --- E-mail: o alerta precisa sair da máquina e chegar numa pessoa ------
+      - key: EMAIL_DRIVER
+        value: resend
+      - key: EMAIL_FROM
+        value: "Prescrição Pro <no-reply@prescricaopro.com.br>"
+      - key: OPERACAO_EMAIL
+        value: contato@leaoamorim.adv.br
+      - key: RESEND_API_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: RESEND_API_KEY
+      # O pagamento recuperado dispara o e-mail de ativação para o CLIENTE, e ele
+      # leva link de acesso: sem APP_URL o link sairia apontando para localhost.
+      - key: APP_NAME
+        value: Prescrição Pro
+      - key: APP_URL
+        value: https://prescricaopro.com.br
+
+  # --- Fila (Redis) ----------------------------------------------------------
+  # Render Key Value, o Redis gerenciado. Só os serviços deste blueprint
+  # conectam (`ipAllowList: []` = rede interna).
+  #
+  # `noeviction` NÃO é opcional para fila: a política padrão (`allkeys-lru`) é
+  # de cache e APAGA chaves quando a memória enche — para o BullMQ isso é
+  # análise enfileirada que some sem erro. Com `noeviction`, memória cheia
+  # recusa trabalho novo, que é falha visível.
+  #
+  # `free` (25 MB) não tem persistência em disco: se o Redis reiniciar, o que
+  # estava na fila e ainda não foi pego se perde. O prejuízo é limitado — a
+  # varredura de análises travadas (30 min sem sinal de vida) marca a análise
+  # com erro e devolve o crédito —, mas é um cliente vendo "erro" e tendo de
+  # pedir de novo. Ao crescer o volume, trocar para `256mb` (com persistência).
+  - type: keyvalue
+    name: prescricao-pro-fila
+    region: oregon
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  # --- Worker de análises ----------------------------------------------------
+  # Mesma imagem do site, outro comando: consome a fila e roda a análise
+  # (extração, OCR, IA) FORA do processo que atende o navegador. Sem ele, um
+  # PDF pesado disputa a única instância com todos os outros clientes — e, se o
+  # processo travar, o webhook de pagamento do Asaas para junto (cliente que
+  # pagou e não recebe acesso).
+  #
+  # Tem `QUEUE_DRIVER: bullmq` PRÓPRIO, independente do web: assim ele conecta e
+  # escuta desde o primeiro deploy, mesmo enquanto o web ainda processa em
+  # `async`. Ver a sequência de dois pushes no QUEUE_DRIVER do web.
+  #
+  # Segredos vêm do web por `fromService`/`envVarKey`, como o cron já faz —
+  # nada a digitar no painel. FIELD_ENCRYPTION_KEY tem de ser a MESMA: é ela
+  # que abre o texto cifrado dos processos; com outra, toda análise falharia
+  # com "página ilegível" (src/lib/pagina-do-processo.ts).
+  - type: worker
+    name: prescricao-pro-worker
+    runtime: docker
+    region: oregon
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    numInstances: 1
+    # Sem `prisma migrate` aqui: migração roda no boot do WEB. O worker só
+    # consome a fila.
+    dockerCommand: npx tsx --tsconfig tsconfig.scripts.json src/lib/queue/worker.ts
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prescricao-pro-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: prescricao-pro-fila
+          type: keyvalue
+          property: connectionString
+      - key: QUEUE_DRIVER
+        value: bullmq
+      # Quantas análises em paralelo neste worker. 1 porque a instância tem
+      # 512 MB e uma análise com OCR já usa boa parte disso (OCR_CONCORRENCIA).
+      - key: QUEUE_CONCURRENCY
+        value: "1"
+      - key: NODE_ENV
+        value: production
+      - key: APP_NAME
+        value: Prescrição Pro
+      - key: APP_URL
+        value: https://prescricaopro.com.br
+      # src/lib/env.ts exige AUTH_SECRET em produção: sem isto o worker morre
+      # no boot. Vem do web para ser o mesmo valor.
+      - key: AUTH_SECRET
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: AUTH_SECRET
+      - key: FIELD_ENCRYPTION_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: FIELD_ENCRYPTION_KEY
+      # --- IA: os mesmos valores do web ---
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: OPENAI_API_KEY
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: "4000"
+      - key: AI_MAX_KNOWLEDGE_CHARS
+        value: "16000"
+      - key: AI_MAX_CORPUS_CHARS
+        value: "24000"
+      - key: USD_BRL
+        value: "5.60"
+      # --- OCR e limites: iguais ao web ---
+      - key: OCR_CONCORRENCIA
+        value: "2"
+      - key: UPLOAD_MAX_PAGINAS
+        value: "1500"
+      # --- Armazenamento dos PDFs: o worker lê o original para extrair ---
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_ENDPOINT
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: S3_ENDPOINT
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        value: prescricao-pro-documentos
+      - key: S3_ACCESS_KEY_ID
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: S3_ACCESS_KEY_ID
+      - key: S3_SECRET_ACCESS_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: S3_SECRET_ACCESS_KEY
+      # --- E-mail: só para alertas de operação (alertarOperacao) ---
+      - key: EMAIL_DRIVER
+        value: resend
+      - key: EMAIL_FROM
+        value: "Prescrição Pro <no-reply@prescricaopro.com.br>"
+      - key: OPERACAO_EMAIL
+        value: contato@leaoamorim.adv.br
+      - key: RESEND_API_KEY
+        fromService:
+          name: prescricao-pro
+          type: web
+          envVarKey: RESEND_API_KEY
+      - key: LOG_LEVEL
+        value: info

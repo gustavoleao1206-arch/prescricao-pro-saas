@@ -1,0 +1,103 @@
+# Portão de qualidade — roda ANTES de qualquer código entrar em `main`.
+#
+# ── Por que existe ────────────────────────────────────────────────────────────
+# Até hoje, qualquer push em `main` ia direto para produção sem nenhuma verificação:
+# sem tipos conferidos, sem os 883 testes, sem nem saber se o projeto compila. A
+# auditoria de 17/08/2026 registrou isso, e o próprio push que a corrigiu passou
+# direto — o que é a prova de que o portão não existia.
+#
+# ── Por que roda `npm test`, e não um Postgres do GitHub ──────────────────────
+# O GitHub Actions oferece um Postgres pronto (`services:`), que seria mais simples.
+# Mas `npm test` sobe um Postgres descartável por conta própria (scripts/pg-teste.mjs),
+# e é esse o comando que o dono roda na máquina dele. Usar caminhos diferentes aqui e
+# lá cria a pior espécie de portão: o que fica verde enquanto o comando de verdade
+# está quebrado.
+#
+# Isso não é hipótese. Durante a etapa 2, uma alteração automática no
+# `scripts/pg-teste.mjs` caiu no array errado e quebrou o `npm test` inteiro; um portão
+# apontado para outro caminho teria passado verde. Este roda o mesmo comando.
+#
+# ── O que ele NÃO faz ────────────────────────────────────────────────────────
+# Não publica, não faz deploy e não toca em produção — quem publica é o Render, ao ver
+# o commit em `main`. E não usa nenhum segredo: os testes não falam com serviço externo
+# (o vitest força EMAIL_DRIVER=console), e as duas variáveis do passo de build são
+# valores de fachada, os mesmos do Dockerfile.
+#
+# ⚠️ ELE SÓ IMPEDE ALGO DEPOIS DE VIRAR EXIGÊNCIA NO GITHUB. Rodar não basta: enquanto
+# não for marcado como "required status check" na proteção de `main`, um push com teste
+# vermelho continua chegando em produção. Liga-se em Settings → Branches,
+# na proteção da `main`.
+
+name: Portão de qualidade
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Um push novo cancela a verificação anterior do mesmo ramo: o que importa é o estado
+# atual do código, e verificação obsoleta só consome minuto e confunde.
+concurrency:
+  group: portao-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    # `ubuntu-latest` SEM `container:`. O script do banco de teste roda o Postgres como
+    # processo filho e o Postgres se recusa a rodar como root — dentro de um container
+    # do Actions o usuário é root, e o `initdb` falharia.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # `npm ci` e não `npm install`: instala exatamente o que está no lockfile e não o
+      # reescreve. Um portão que altera o lockfile mente sobre o que testou.
+      - name: Instalar dependências
+        run: npm ci
+
+      # Passo explícito: o cliente do Prisma é gerado em node_modules, e `npm ci` não o
+      # gera. Sem isto, o typecheck falha por tipos que não existem ainda.
+      - name: Gerar cliente do Prisma
+        run: npx prisma generate
+
+      # Guarda o Postgres descartável entre execuções: sem cache, cada rodada baixa os
+      # binários de novo. A chave inclui a VERSÃO porque um cluster criado por outra
+      # major faz o `pg_ctl` recusar subir — e aí a correção é apagar o cache.
+      - name: Cache do Postgres de teste
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ptp-pgtest
+          key: ptp-pgtest-16.14.0-beta.17-${{ runner.os }}
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # O mesmo comando da máquina do dono. `PTP_PG_BASE` aponta para o diretório
+      # temporário do runner (o padrão do script é um caminho do Windows).
+      - name: Testes
+        run: npm test
+        env:
+          PTP_PG_BASE: ${{ runner.temp }}/ptp-pgtest
+
+      # Confirma que o projeto COMPILA. As duas variáveis são de fachada e espelham o
+      # Dockerfile (nenhuma página consulta o banco em tempo de build); existem só para o
+      # módulo de ambiente carregar. Não são segredo e não devem virar GitHub Secret.
+      # Se as do Dockerfile mudarem, estas precisam acompanhar.
+      - name: Build
+        run: npm run build:check
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=public
+          AUTH_SECRET: valor-de-fachada-do-build-substituido-em-execucao
