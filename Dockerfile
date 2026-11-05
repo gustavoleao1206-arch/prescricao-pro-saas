@@ -28,7 +28,7 @@ COPY . .
 # Nenhuma página consulta o banco em tempo de build (toda rota de API é
 # dinâmica), então estes valores não são usados de fato: existem só para o
 # módulo carregar. Por serem ENV deste estágio, não chegam à imagem final — o
-# estágio `runner` recebe os segredos reais pelas variáveis do Render.
+# estágio `runner` recebe os segredos reais pelas variáveis de ambiente da hospedagem.
 ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build?schema=public"
 ENV AUTH_SECRET="valor-de-fachada-do-build-substituido-em-execucao"
 
@@ -52,7 +52,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # node_modules completo (por cima do mínimo do standalone) + fontes: permitem
 # rodar `prisma migrate deploy` no boot e o cron de créditos na mesma imagem
-# (Render Cron Job com comando `npx tsx --tsconfig tsconfig.scripts.json scripts/manutencao-creditos.ts`).
+# (rotina agendada com o comando `npx tsx --tsconfig tsconfig.scripts.json scripts/manutencao-creditos.ts`).
 #
 # O --chown importa: sem ele estes caminhos ficam de root, e o contêiner roda
 # como `nextjs`. O `npx prisma` no boot precisa escrever em node_modules (cache

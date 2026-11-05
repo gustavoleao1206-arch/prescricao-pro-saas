@@ -51,7 +51,7 @@ In Brazil, unpaid taxes are collected through a lawsuit filed by the government 
 | Jobs | Queue driver `sync` / `async` / BullMQ + Redis worker |
 | Storage / e-mail | Local disk or S3-compatible bucket; console or Resend |
 | Tests / CI | Vitest, embedded PostgreSQL 16, GitHub Actions |
-| Deploy | Docker (non-root), Render Blueprint (`render.yaml`: web, worker, cron, Redis, Postgres) |
+| Deploy | Docker image (non-root) that runs on any container host; `render.yaml` kept as a legacy example Render Blueprint (web, worker, cron, Redis, Postgres) |
 
 ## Architecture
 
@@ -81,7 +81,7 @@ Analysis pipeline, in order: text extraction and OCR → deterministic document 
 - **Security:** TOTP two-factor authentication with hashed single-use backup codes; opaque session tokens stored hashed, with absolute and idle timeouts (shorter for staff); bcrypt (cost 12); login lockout and rate limits; a strict Content-Security-Policy with a per-request nonce on the private area; the Next.js image optimizer disabled; a `server-only` guard so the Prisma client and secrets cannot reach the browser bundle (enforced by tests).
 - **LGPD by design:** CPF/CNPJ, 2FA secrets and the full text of uploaded court records are encrypted at rest with AES-256-GCM (`src/lib/crypto.ts`, `src/lib/pagina-do-processo.ts`); retention periods are a single source of truth shared by the privacy policy page and the purge job (`src/lib/retencao.ts`); audit logs are sanitized.
 - **Tenant isolation in two layers:** every query goes through the tenant context (`src/lib/tenant.ts`), and Postgres row-level-security policies for the seven case-content tables are shipped as a migration, tested with a dedicated non-owner role (`tests/tranca-do-banco.test.ts`); they take effect when the app connects with that role (`prisma/rls/usuario-de-aplicacao.sql`).
-- **Tests that guard configuration, not just code:** the suite fails if the CI quality gate is emptied, if a Node entry point is launched without the `server-only` workaround, if the Render worker's settings drift from the web service's, or if `docker-compose.yml` publishes a port beyond `127.0.0.1`.
+- **Tests that guard configuration, not just code:** the suite fails if the CI quality gate is emptied, if a Node entry point is launched without the `server-only` workaround, if the worker's settings in the example Blueprint drift from the web service's, or if `docker-compose.yml` publishes a port beyond `127.0.0.1`.
 - **Quality gate in CI** (`.github/workflows/portao.yml`): type check, lint, the full test suite against PostgreSQL and a production build on every pull request.
 
 ## Running locally

@@ -318,7 +318,11 @@ npm test
 ### Variáveis de ambiente
 
 As variáveis são lidas/validadas em `src/lib/env.ts`. Todas as chaves (IA, banco, storage,
-e-mail, Asaas) estão descritas em `.env.example` e `render.yaml`.
+e-mail, Asaas) estão descritas em `.env.example`.
+
+Em produção a aplicação roda como contêiner Docker (`Dockerfile`), em qualquer host que execute
+contêineres; as variáveis ficam no painel/ambiente da hospedagem, nunca no repositório. O
+`render.yaml` permanece como exemplo de Blueprint (legado: não é mais o deploy de produção).
 
 ---
 

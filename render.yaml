@@ -7,6 +7,11 @@
 #
 # IMPORTANTE: a imagem Docker é construída NOS SERVIDORES DO RENDER. Não é
 # preciso ter Docker funcionando na sua máquina para publicar.
+#
+# LEGADO: este arquivo é mantido como EXEMPLO de Blueprint. Ele não é mais o
+# deploy de produção — a aplicação roda como contêiner Docker (ver Dockerfile)
+# em qualquer host que execute contêineres, e as variáveis de ambiente ficam no
+# painel/ambiente da hospedagem. Mudar este arquivo não muda a produção.
 # =============================================================================
 
 databases:
@@ -162,7 +167,7 @@ services:
       - key: S3_REGION
         value: auto
       - key: S3_BUCKET
-        value: prescricao-pro-documentos
+        value: your-documents-bucket
       - key: S3_ACCESS_KEY_ID
         sync: false
       - key: S3_SECRET_ACCESS_KEY
@@ -183,7 +188,7 @@ services:
       # que entrou sem conta identificada e cobrança recebida após o cancelamento.
       # É o endereço que alguém LÊ — vazio, cai no contato do fornecedor.
       - key: OPERACAO_EMAIL
-        value: contato@leaoamorim.adv.br
+        value: ops@example.com
       - key: RESEND_API_KEY
         sync: false
 
@@ -346,7 +351,7 @@ services:
       - key: EMAIL_FROM
         value: "Prescrição Pro <no-reply@prescricaopro.com.br>"
       - key: OPERACAO_EMAIL
-        value: contato@leaoamorim.adv.br
+        value: ops@example.com
       - key: RESEND_API_KEY
         fromService:
           name: prescricao-pro
@@ -476,7 +481,7 @@ services:
       - key: S3_REGION
         value: auto
       - key: S3_BUCKET
-        value: prescricao-pro-documentos
+        value: your-documents-bucket
       - key: S3_ACCESS_KEY_ID
         fromService:
           name: prescricao-pro
@@ -493,7 +498,7 @@ services:
       - key: EMAIL_FROM
         value: "Prescrição Pro <no-reply@prescricaopro.com.br>"
       - key: OPERACAO_EMAIL
-        value: contato@leaoamorim.adv.br
+        value: ops@example.com
       - key: RESEND_API_KEY
         fromService:
           name: prescricao-pro

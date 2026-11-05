@@ -52,7 +52,7 @@ e encerra".
 
 Crédito avulso é sempre cobrança **única** (PIX ou cartão).
 
-## Variáveis de ambiente (no Render)
+## Variáveis de ambiente (no ambiente da hospedagem)
 
 | Variável | O que é |
 |---|---|
@@ -71,8 +71,8 @@ No Asaas, troque para o ambiente **Sandbox** e vá em
 **Configurações → Integrações → Chave de API** (Access Token). Copie a chave —
 ela começa com `$aact_hmlg_...` no sandbox.
 
-### 2. Definir as variáveis no Render
-No serviço `prescricao-pro` → **Environment**, adicione:
+### 2. Definir as variáveis na hospedagem
+No painel (ou no ambiente) do serviço da aplicação, adicione:
 `ASAAS_ENV=sandbox`, `ASAAS_API_KEY=<a chave>`, e um `ASAAS_WEBHOOK_TOKEN` que
 você inventa agora (32+ caracteres). Gere um bom token com:
 

@@ -98,7 +98,11 @@ experimental channels.
 
 ### Infrastructure as code
 
-`render.yaml` is a Render Blueprint: a new variable added there reaches
-production with the push. Only secrets (`sync: false`) are set in the dashboard.
-`tests/render-fila.test.ts` keeps the worker's configuration in sync with the
-web service's.
+The app ships as a Docker image (`Dockerfile`) and runs on any host that runs
+containers. Environment variables live in the hosting provider's dashboard or
+environment, never in the repository; `.env.example` lists them.
+
+`render.yaml` is kept as an example Render Blueprint. It is legacy: it is no
+longer the production deployment, so editing it does not change production.
+`tests/render-fila.test.ts` still keeps the worker's configuration in that
+example in sync with the web service's.

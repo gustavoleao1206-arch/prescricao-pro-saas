@@ -50,7 +50,7 @@ A cobrança judicial de tributos é feita por execução fiscal. Muitas ficam pa
 | Processamento | Fila `sync` / `async` / BullMQ + worker com Redis |
 | Arquivos / e-mail | Disco local ou bucket compatível com S3; console ou Resend |
 | Testes / CI | Vitest, PostgreSQL 16 embutido, GitHub Actions |
-| Deploy | Docker (usuário sem root), Blueprint do Render (`render.yaml`: web, worker, cron, Redis, Postgres) |
+| Deploy | Imagem Docker (usuário sem root) que roda em qualquer host de contêiner; `render.yaml` mantido como exemplo legado de Blueprint do Render (web, worker, cron, Redis, Postgres) |
 
 ## Arquitetura
 
@@ -80,7 +80,7 @@ Pipeline de análise, na ordem: extração de texto e OCR → checklist de docum
 - **Segurança:** autenticação em dois fatores (TOTP) com códigos de backup de uso único guardados como hash; sessões por token opaco guardado como hash, com prazo absoluto e por inatividade (menor para a equipe); bcrypt (custo 12); bloqueio de login e rate limit; Content-Security-Policy estrita com nonce por requisição na área privada; otimizador de imagem do Next desligado; trava `server-only` para o cliente do Prisma e os segredos não chegarem ao navegador (garantida por teste).
 - **LGPD desde o desenho:** CPF/CNPJ, segredo do 2FA e o texto integral dos autos enviados são cifrados em repouso com AES-256-GCM (`src/lib/crypto.ts`, `src/lib/pagina-do-processo.ts`); os prazos de retenção têm fonte única, lida pela Política de Privacidade e pela rotina que os executa (`src/lib/retencao.ts`); a trilha de auditoria é saneada.
 - **Isolamento entre inquilinos em duas camadas:** toda consulta passa pelo contexto do inquilino (`src/lib/tenant.ts`), e políticas de row-level security para as sete tabelas de conteúdo do processo vêm numa migração, testadas com um papel que não é dono das tabelas (`tests/tranca-do-banco.test.ts`); elas passam a valer quando a aplicação conecta com esse papel (`prisma/rls/usuario-de-aplicacao.sql`).
-- **Testes que guardam configuração, não só código:** a suíte falha se o portão de CI for esvaziado, se um ponto de entrada Node rodar sem a trava do `server-only`, se a configuração do worker no Render divergir da do web, ou se o `docker-compose.yml` publicar porta fora de `127.0.0.1`.
+- **Testes que guardam configuração, não só código:** a suíte falha se o portão de CI for esvaziado, se um ponto de entrada Node rodar sem a trava do `server-only`, se a configuração do worker no Blueprint de exemplo divergir da do web, ou se o `docker-compose.yml` publicar porta fora de `127.0.0.1`.
 - **Portão de qualidade no CI** (`.github/workflows/portao.yml`): tipos, lint, a suíte inteira contra PostgreSQL e build de produção em todo pull request.
 
 ## Como rodar localmente

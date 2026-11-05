@@ -10,7 +10,7 @@ import { readFileSync, existsSync } from "node:fs";
  *
  * ⚠️ O que estes testes NÃO garantem: que o portão está EXIGIDO no GitHub. Isso é configuração da conta, não
  * do repositório, e só o dono liga — em Settings → Branches, na proteção da `main`. Enquanto não estiver
- * exigido, o portão fica verde ou vermelho ao lado do commit e o Render publica de qualquer forma.
+ * exigido, o portão fica verde ou vermelho ao lado do commit e a hospedagem publica de qualquer forma.
  */
 
 const CAMINHO = ".github/workflows/portao.yml";

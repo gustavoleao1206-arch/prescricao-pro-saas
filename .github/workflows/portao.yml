@@ -18,7 +18,7 @@
 # apontado para outro caminho teria passado verde. Este roda o mesmo comando.
 #
 # ── O que ele NÃO faz ────────────────────────────────────────────────────────
-# Não publica, não faz deploy e não toca em produção — quem publica é o Render, ao ver
+# Não publica, não faz deploy e não toca em produção — quem publica é a hospedagem, ao ver
 # o commit em `main`. E não usa nenhum segredo: os testes não falam com serviço externo
 # (o vitest força EMAIL_DRIVER=console), e as duas variáveis do passo de build são
 # valores de fachada, os mesmos do Dockerfile.
